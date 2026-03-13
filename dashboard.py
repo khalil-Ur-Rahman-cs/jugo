@@ -31,19 +31,26 @@ class Dashboard:
     def __init__(self):
         self.root = ctk.CTk()
         self.root.title("JUGO SWAT - Dashboard")
-        self.root.geometry("1400x900")
         self.root.resizable(True, True)
         self.brand_logo_path = os.path.join(os.path.dirname(__file__), "assets", "logo2.png")
         self.sidebar_logo_image = None
         self._profit_refresh_active = False
-        
-        # Center window
+        # Permanent hide/show state for each of the 4 finance cards (index 0-3)
+        self.states = [False, False, False, False]
+        # References to the 4 value labels (populated in show_dashboard)
+        self.finance_labels = [None, None, None, None]
+
+        # Calculate window size dynamically based on screen resolution
+        # Use 95% of screen dimensions, capped at 1400x900 max
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        x = (screen_width - 1400) // 2
-        y = (screen_height - 900) // 2
-        self.root.geometry(f"1400x900+{x}+{y}")
-        
+        win_width = min(int(screen_width * 0.95), 1400)
+        win_height = min(int(screen_height * 0.95), 900)
+        x = (screen_width - win_width) // 2
+        y = (screen_height - win_height) // 2
+        self.root.geometry(f"{win_width}x{win_height}+{x}+{y}")
+        self.root.minsize(min(screen_width, 900), min(screen_height, 600))
+
         self.setup_ui()
         self.root.after(0, self.maximize_window)
 
@@ -154,8 +161,8 @@ class Dashboard:
         )
         self.header.grid(row=0, column=0, sticky="w", pady=(0, 20))
         
-        # Content Frame
-        self.content_frame = ctk.CTkFrame(self.main_frame)
+        # Content Frame - scrollable so all dashboard widgets are reachable on small screens
+        self.content_frame = ctk.CTkScrollableFrame(self.main_frame)
         self.content_frame.grid(row=1, column=0, sticky="nsew")
         self.content_frame.grid_columnconfigure(0, weight=1)
         
@@ -231,42 +238,52 @@ class Dashboard:
             card = ctk.CTkFrame(finance_frame, corner_radius=10)
             card.grid(row=0, column=i, padx=10, pady=10, sticky="nsew")
             finance_frame.grid_columnconfigure(i, weight=1)
-            
+
             lbl_title = ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=12), text_color="gray")
             lbl_title.pack(pady=(15, 5))
-            
-            lbl_value = ctk.CTkLabel(card, text=value, font=ctk.CTkFont(size=22, weight="bold"), text_color=color)
+
+            # Show '****' immediately if the user previously hid this card
+            display_text = "****" if self.states[i] else value
+            lbl_value = ctk.CTkLabel(card, text=display_text, font=ctk.CTkFont(size=22, weight="bold"), text_color=color)
             lbl_value.pack()
-            
+
             lbl_sub = ctk.CTkLabel(card, text=subtitle, font=ctk.CTkFont(size=10), text_color="gray")
             lbl_sub.pack(pady=(5, 15))
 
-            if i == 0:  # First card = Today's Profit
+            # Store label reference so refresh_profit can update it
+            self.finance_labels[i] = lbl_value
+
+            # Legacy named references kept for compatibility
+            if i == 0:
                 self.today_profit_label = lbl_value
-                
-                hidden_state = {"hidden": False}
-                
-                def toggle_value(value_label=lbl_value, original_value=value, state=hidden_state):
-                    state["hidden"] = not state["hidden"]
-                    value_label.configure(text="****" if state["hidden"] else original_value)
-                
-                eye_btn = ctk.CTkButton(
-                    card,
-                    text="👁",
-                    width=28,
-                    height=28,
-                    font=ctk.CTkFont(size=14),
-                    fg_color="transparent",
-                    text_color="gray",
-                    hover_color=("gray85", "gray25"),
-                    corner_radius=6,
-                    command=toggle_value
-                )
-                eye_btn.place(relx=1.0, rely=0.0, x=-8, y=8, anchor="ne")
-            elif i == 2:  # Third card = This Month Profit
+            elif i == 2:
                 self.month_profit_label = lbl_value
-            elif i == 3:  # Fourth card = Outstanding Credit
+            elif i == 3:
                 self.credit_label = lbl_value
+
+            # Eye toggle button for every card
+            def make_toggle(idx=i, lbl=lbl_value):
+                def toggle():
+                    self.states[idx] = not self.states[idx]
+                    lbl.configure(text="****" if self.states[idx] else lbl._stored_value)
+                return toggle
+
+            # Attach the live value to the label widget so toggle can retrieve it
+            lbl_value._stored_value = value
+
+            eye_btn = ctk.CTkButton(
+                card,
+                text="👁",
+                width=28,
+                height=28,
+                font=ctk.CTkFont(size=14),
+                fg_color="transparent",
+                text_color="gray",
+                hover_color=("gray85", "gray25"),
+                corner_radius=6,
+                command=make_toggle(i, lbl_value)
+            )
+            eye_btn.place(relx=1.0, rely=0.0, x=-8, y=8, anchor="ne")
 
         # ===== BUSINESS STATS CARDS (ROW 1) - CLICKABLE =====
         stats_frame = ctk.CTkFrame(self.content_frame)
@@ -495,39 +512,47 @@ class Dashboard:
         self.root.after(5000, self._schedule_profit_refresh)
 
     def refresh_profit(self):
-        """Recalculate and update today's and monthly profit"""
+        """Recalculate and update today's and monthly profit.
+        Respects self.states[i]: if the user has hidden a card, the refresh
+        only updates the stored value without un-hiding it.
+        """
         try:
-            # Get fresh data
+            # Fetch fresh data
             today_gross = db.get_today_profit()
-            
-            # Import here to avoid circular import
+
             from expenses import ExpensesManager
             exp_manager = ExpensesManager()
             today_exp = exp_manager.get_today_total()
             month_exp = exp_manager.get_month_total()
             monthly_gross = db.get_monthly_summary()
-            
-            # Calculate net profit
-            net_profit = today_gross['profit'] - today_exp
+            credit = db.get_outstanding_credit()
+
+            net_profit  = today_gross['profit'] - today_exp
             monthly_net = monthly_gross['profit'] - month_exp
-            
-            # Update the profit card (4th card - index 3)
-            # Note: You need to store reference to profit label
-            if hasattr(self, 'today_profit_label'):
-                self.today_profit_label.configure(
-                    text=f"Rs. {net_profit:,.0f}",
-                    text_color="#2ECC71" if net_profit >= 0 else "#E74C3C"
-                )
-            if hasattr(self, 'month_profit_label'):
-                self.month_profit_label.configure(
-                    text=f"Rs. {monthly_net:,.0f}",
-                    text_color="#9B59B6" if monthly_net >= 0 else "#E74C3C"
-                )
-            if hasattr(self, 'credit_label'):
-                credit = db.get_outstanding_credit()
-                self.credit_label.configure(
-                    text=f"Rs. {credit:,.0f}"
-                )
+
+            # Map each card index to its (new_value, color) pair
+            new_values = [
+                (f"Rs. {net_profit:,.0f}",  "#2ECC71" if net_profit  >= 0 else "#E74C3C"),  # 0: Today Profit
+                (None, None),                                                                  # 1: Investment — not live-updated
+                (f"Rs. {monthly_net:,.0f}", "#9B59B6" if monthly_net >= 0 else "#E74C3C"),  # 2: Month Profit
+                (f"Rs. {credit:,.0f}",      "#E67E22"),                                       # 3: Outstanding Credit
+            ]
+
+            for idx, (new_val, new_color) in enumerate(new_values):
+                if new_val is None:
+                    continue  # skip cards that are not live-refreshed
+                lbl = self.finance_labels[idx] if hasattr(self, 'finance_labels') else None
+                if lbl is None:
+                    continue
+                # Always keep the stored value up-to-date so toggle shows current data
+                lbl._stored_value = new_val
+                # Only update displayed text if the card is currently visible
+                if not self.states[idx]:
+                    lbl.configure(text=new_val)
+                    if new_color:
+                        lbl.configure(text_color=new_color)
+                # If self.states[idx] is True the card shows '****' — leave it alone
+
         except Exception as e:
             print(f"Refresh error: {e}")
 
