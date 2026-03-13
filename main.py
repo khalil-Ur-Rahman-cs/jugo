@@ -19,23 +19,24 @@ def get_asset_path(filename):
 
 def main():
     app = LoginWindow()
+    window = getattr(app, "window", None) or getattr(app, "root", None) or app
     
     # ========== WINDOW TITLE & ICON ==========
     
     # 1. Window Title (Title bar mein dikhega)
-    app.title("SM ENTERPRISES")
+    window.title("SM ENTERPRISES")
     
     # 2. Window Icon (Taskbar + Title bar ke liye)
     try:
         icon_path = get_asset_path("sm_logo.ico")
-        app.iconbitmap(icon_path)
+        window.iconbitmap(icon_path)
     except Exception as e:
         print(f"Icon load nahi hua: {e}")
     
     # 3. Window Icon Alternative (agar upar wala fail ho)
     try:
         icon_path = get_asset_path("sm_logo.ico")
-        app.iconphoto(False, ImageTk.PhotoImage(file=icon_path))
+        window.iconphoto(False, ImageTk.PhotoImage(file=icon_path))
     except:
         pass
     

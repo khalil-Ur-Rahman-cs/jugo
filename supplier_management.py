@@ -486,14 +486,14 @@ class SupplierManager:
         dialog.title("New Supplier Purchase")
         dialog.transient(self.parent)
         dialog.grab_set()
-        center_window(dialog, 600, 780)
+        center_window(dialog, 560, 700)
         
         ctk.CTkLabel(dialog, text="📦 New Purchase from Supplier", 
                     font=ctk.CTkFont(size=20, weight="bold")).pack(pady=10)
         
         # Form frame
-        form = ctk.CTkFrame(dialog, fg_color="transparent")
-        form.pack(fill="x", padx=10, pady=10)
+        form = ctk.CTkScrollableFrame(dialog)
+        form.pack(fill="both", expand=True, padx=10, pady=10)
         
         # Date
         ctk.CTkLabel(form, text="Date:", font=ctk.CTkFont(size=12)).pack(anchor="w", pady=(5, 5))
@@ -511,13 +511,9 @@ class SupplierManager:
         # Product Selection
         ctk.CTkLabel(form, text="Product:", font=ctk.CTkFont(size=12)).pack(anchor="w", pady=(10, 5))
         
-        # Get products from inventory
+        # Get products from inventory (optional for suggestions only)
         db.cursor.execute("SELECT id, name, stock FROM flavors ORDER BY name")
         products = db.cursor.fetchall()
-        if not products:
-            dialog.destroy()
-            messagebox.showwarning("Inventory Required", "Please add inventory items first.")
-            return
 
         product_names = [p[1] for p in products]
 
@@ -618,7 +614,7 @@ class SupplierManager:
                         messagebox.showerror("Error", "Enter a valid sale price for new items!")
                         return
 
-                    category = category_entry.get().strip() or "General"
+                    category = "General"
                     db.cursor.execute("""
                         INSERT INTO flavors (name, category, sale_price, cost_price, stock, created_at)
                         VALUES (?, ?, ?, ?, ?, ?)
